@@ -46,7 +46,8 @@ class SparseMoE(nn.Module):
             for i in range(len(dims) - 1):
                 layers.append(nn.Dropout(dropout))
                 layers.append(nn.Linear(dims[i], dims[i + 1]))
-                layers.append(act(activation))
+                if i < len(dims) - 2:
+                    layers.append(act(activation))
             self.experts.append(nn.Sequential(*layers))
 
     def _route_logits(self, x, train: bool):
@@ -58,39 +59,25 @@ class SparseMoE(nn.Module):
 
     def forward(self, x, return_gate: bool = False):
         orig_shape = x.shape
-        x = x.view(-1, self.input_size)  # [B, H]
+        x = x.reshape(-1, self.input_size)  # [B, H]
         B = x.size(0)
 
-        if self.training:
-            # Dense gating over all experts
-            logits = self._route_logits(x, train=True)  # [B, E]
-            gates = F.softmax(logits, dim=1)  # [B, E]
-            out = torch.zeros(B, self.output_size, device=x.device, dtype=x.dtype)
-            for e, expert in enumerate(self.experts):
-                y_e = expert(x)  # [B, H_out]
-                out += gates[:, e].unsqueeze(1) * y_e
-            topk_idx = None
-        else:
-            # Sparse inference: Top-k (default Top-1)
-            logits = self._route_logits(x, train=False)  # [B, E]
-            k = self.top_k_eval
-            top_logits, top_idx = logits.topk(k, dim=1)  # [B, k]
-            masked = torch.full_like(logits, float("-inf"))
-            masked.scatter_(1, top_idx, top_logits)  # 未入选 = -inf
-            gates = F.softmax(masked, dim=1)  # 严格稀疏
-            out = torch.zeros(B, self.output_size, device=x.device, dtype=x.dtype)
-            for e, expert in enumerate(self.experts):
-                mask_e = (top_idx == e).any(dim=1)  # [B]
-                if mask_e.any():
-                    y_e = expert(x[mask_e])  # [B_e, H_out]
-                    g_e = gates[mask_e, e].unsqueeze(1)  # [B_e, 1]
-                    out[mask_e] += g_e * y_e
-            topk_idx = top_idx
-            print(torch.mean(logits, dim=0))
-            counts = torch.bincount(topk_idx.view(-1), minlength=self.num_experts)
-            print("Expert usage:", counts.tolist())
+        logits = self._route_logits(x, train=self.training)  # [B, E]
+        k = self.top_k_eval
+        top_logits, topk_idx = logits.topk(k, dim=1)  # [B, k]
+        masked = torch.full_like(logits, float("-inf"))
+        masked.scatter_(1, topk_idx, top_logits)
+        gates = F.softmax(masked, dim=1)  # strictly top-k sparse
 
-        out = out.view(*orig_shape[:-1], self.output_size)
+        out = torch.zeros(B, self.output_size, device=x.device, dtype=x.dtype)
+        for e, expert in enumerate(self.experts):
+            mask_e = (topk_idx == e).any(dim=1)  # [B]
+            if mask_e.any():
+                y_e = expert(x[mask_e])  # [B_e, H_out]
+                g_e = gates[mask_e, e].unsqueeze(1)  # [B_e, 1]
+                out[mask_e] += g_e * y_e
+
+        out = out.reshape(*orig_shape[:-1], self.output_size)
         if return_gate:
             return out, {"logits": logits, "gates": gates, "topk_idx": topk_idx}
         return out
