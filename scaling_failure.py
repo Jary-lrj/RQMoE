@@ -204,6 +204,17 @@ def append_csv(path: Path, row: Dict[str, Any]) -> None:
         writer.writerow(flat)
 
 
+def cleanup_checkpoint(checkpoint_path: Path, logger: Any) -> List[str]:
+    if not checkpoint_path.exists():
+        return []
+    try:
+        checkpoint_path.unlink()
+        return [str(checkpoint_path)]
+    except OSError as exc:
+        logger.warning("Failed to remove checkpoint %s: %s", checkpoint_path, exc)
+        return []
+
+
 def run_one(
     args: argparse.Namespace,
     dataset_name: str,
@@ -247,13 +258,19 @@ def run_one(
     train_data, valid_data, test_data = data_preparation(config, dataset)
     model = model_class(config, train_data.dataset).to(config["device"])
     trainer = Trainer(config, model)
+    checkpoint_path = Path(trainer.saved_model_file)
 
     best_valid_score, best_valid_result = trainer.fit(
         train_data,
         valid_data,
+        saved=True,
         show_progress=args.show_progress,
     )
     test_result = trainer.evaluate(test_data, show_progress=args.show_progress)
+    removed_checkpoints = []
+    if not args.keep_checkpoints:
+        removed_checkpoints = cleanup_checkpoint(checkpoint_path, logger)
+        logger.info("[ScalingFailure] removed_checkpoints=%s", removed_checkpoints)
 
     row = {
         "dataset": dataset_name,
@@ -267,6 +284,7 @@ def run_one(
         "best_valid_score": float(best_valid_score),
         "best_valid_result": best_valid_result,
         "test_result": test_result,
+        "removed_checkpoints": removed_checkpoints,
         "elapsed_sec": round(time.time() - start, 4),
     }
     logger.info("[ScalingFailure] result=%s", row)
@@ -305,6 +323,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gpu-id", type=str, default=None)
     parser.add_argument("--use-gpu", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--show-progress", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--keep-checkpoints", action="store_true")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "exps" / "running" / "scaling_failure")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
