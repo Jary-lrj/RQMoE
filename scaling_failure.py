@@ -305,16 +305,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--models",
         nargs="+",
-        default=["DeepFM", "DCNv2", "AutoInt"],
-        choices=["DeepFM", "DCNv2", "DCNV2", "AutoInt"],
+        default=["DeepFM","DCNV2"],
+        choices=["DCNV2","DeepFM"],
     )
     parser.add_argument(
         "--datasets",
         nargs="+",
-        default=["Avazu"],
+        default=["Avazu","Beauty","Movielens-1M"],
         choices=["Avazu", "avazu", "Beauty", "MovieLens-1M", "Movielens-1M", "ml-1m"],
     )
-    parser.add_argument("--active-experts", nargs="+", type=int, default=[1, 2, 4, 8, 16])
+    parser.add_argument("--active-experts", nargs="+", type=int, default=[1,2, 4, 8, 16])
     parser.add_argument("--num-experts", type=int, default=16)
     parser.add_argument("--activation", type=str, default="relu")
     parser.add_argument("--noisy-gating", action="store_true")
