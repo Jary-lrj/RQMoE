@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
@@ -175,7 +176,10 @@ def pair_delta_scale(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     grouped: Dict[Tuple[str, float], Dict[int, Dict[str, Any]]] = {}
     for row in rows:
         key = (row["intervention_kind"], float(row["intervention_value"]))
-        grouped.setdefault(key, {})[int(row["top_k"])] = row
+        top_k = int(row["top_k"])
+        if top_k in grouped.setdefault(key, {}):
+            raise ValueError(f"Duplicate Top-k={top_k} result for intervention {key}.")
+        grouped[key][top_k] = row
 
     paired_rows: List[Dict[str, Any]] = []
     for (kind, value), by_top_k in grouped.items():
@@ -183,6 +187,51 @@ def pair_delta_scale(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
             raise ValueError(f"Expected Top-k 1 and 4 for {(kind, value)}, found {sorted(by_top_k)}.")
         k1 = by_top_k[1]
         k4 = by_top_k[4]
+        common_keys = (
+            "protocol",
+            "runtime_split_seed",
+            "checkpoint_saved_config_seed",
+            "checkpoint_training_top_k",
+            "num_experts",
+            "router_dimension",
+            "calibration_samples",
+            "spectrum_centered",
+            "retained_rank",
+            "sample_count",
+            "intervention_kind",
+            "intervention_value",
+        )
+        inconsistent = [key for key in common_keys if k1[key] != k4[key]]
+        if inconsistent:
+            raise ValueError(
+                f"Top-k pair for {(kind, value)} differs on required invariants: {inconsistent}."
+            )
+        if k1["protocol"] == "shared_checkpoint":
+            shared_keys = (
+                "checkpoint",
+                "effective_rank",
+                "normalized_effective_rank",
+                "top1_load_normalized_entropy",
+                "top1_load_cv_squared",
+                "mean_normalized_full_softmax_logit_entropy",
+                "zero_norm_count",
+                "max_norm_relative_error",
+            )
+            inconsistent_shared = []
+            for key in shared_keys:
+                left, right = k1[key], k4[key]
+                equal = (
+                    math.isclose(float(left), float(right), rel_tol=0.0, abs_tol=1e-12)
+                    if isinstance(left, float)
+                    else left == right
+                )
+                if not equal:
+                    inconsistent_shared.append(key)
+            if inconsistent_shared:
+                raise ValueError(
+                    f"Shared-checkpoint Top-k pair for {(kind, value)} is inconsistent on "
+                    f"{inconsistent_shared}."
+                )
         paired_rows.append(
             {
                 "protocol": k1["protocol"],
@@ -199,8 +248,18 @@ def pair_delta_scale(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "top1_load_entropy_k4": k4["top1_load_normalized_entropy"],
                 "top1_load_cv_squared_k1": k1["top1_load_cv_squared"],
                 "top1_load_cv_squared_k4": k4["top1_load_cv_squared"],
-                "mean_router_entropy_k1": k1["mean_normalized_router_entropy"],
-                "mean_router_entropy_k4": k4["mean_normalized_router_entropy"],
+                "full_softmax_logit_entropy_k1": k1[
+                    "mean_normalized_full_softmax_logit_entropy"
+                ],
+                "full_softmax_logit_entropy_k4": k4[
+                    "mean_normalized_full_softmax_logit_entropy"
+                ],
+                "active_topk_weight_entropy_k1": k1[
+                    "mean_normalized_active_topk_weight_entropy"
+                ],
+                "active_topk_weight_entropy_k4": k4[
+                    "mean_normalized_active_topk_weight_entropy"
+                ],
                 "gate_weight_load_entropy_k1": k1["gate_weight_load_normalized_entropy"],
                 "gate_weight_load_entropy_k4": k4["gate_weight_load_normalized_entropy"],
                 "gate_weight_load_cv_squared_k1": k1["gate_weight_load_cv_squared"],

@@ -10,7 +10,7 @@ from typing import Any, Mapping
 import torch
 
 from .configuration import canonical_config_value, config_value
-from .project import Config, DeepFM_MoE
+from .project import Config, DeepFM_MoE, build_deepfm_moe
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,8 @@ def load_checkpoint_bundle(path: Path) -> CheckpointBundle:
     if missing_keys:
         raise ValueError(
             f"{path} is not a Switch.DeepFM_MoE checkpoint; missing state keys {sorted(missing_keys)}. "
-            "Use a checkpoint produced by exps/running/run_SAG.py --model DeepFM_MoE."
+            "Use additional_implementation.train_shared_checkpoint or "
+            "exps/running/run_SAG.py --model DeepFM_MoE."
         )
 
     saved_config = checkpoint.get("config")
@@ -62,17 +63,28 @@ def validate_checkpoint_config(runtime_config: Config, bundle: CheckpointBundle)
     critical_keys = (
         "dataset",
         "data_path",
+        "atomic_data_path",
         "USER_ID_FIELD",
         "ITEM_ID_FIELD",
+        "TIME_FIELD",
+        "TIMESTAMP_FIELD",
         "LABEL_FIELD",
         "RATING_FIELD",
         "load_col",
+        "unused_col",
         "threshold",
+        "filter_inter_by_user_or_item",
+        "user_inter_num_interval",
+        "item_inter_num_interval",
+        "val_interval",
+        "normalize_all",
+        "numerical_features",
         "eval_args",
         "repeatable",
         "embedding_size",
         "mlp_hidden_size",
         "dropout_prob",
+        "num_experts",
         "seed",
     )
     mismatches = []
@@ -91,7 +103,7 @@ def validate_checkpoint_config(runtime_config: Config, bundle: CheckpointBundle)
 
 
 def load_frozen_model(config: Config, dataset: Any, bundle: CheckpointBundle) -> DeepFM_MoE:
-    model = DeepFM_MoE(config, dataset, item_freq_tensor=None).to(config["device"])
+    model = build_deepfm_moe(config, dataset).to(config["device"])
     state_dict = bundle.payload.get("state_dict", bundle.payload)
     model.load_state_dict(state_dict, strict=True)
     other_parameter = bundle.payload.get("other_parameter")

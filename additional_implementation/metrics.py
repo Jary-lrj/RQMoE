@@ -36,7 +36,8 @@ class RoutingDiagnostics:
         self.top1_counts = torch.zeros(num_experts, dtype=torch.float64)
         self.selected_counts = torch.zeros(num_experts, dtype=torch.float64)
         self.gate_weight_sums = torch.zeros(num_experts, dtype=torch.float64)
-        self.sample_entropy_sum = 0.0
+        self.full_softmax_entropy_sum = 0.0
+        self.active_topk_entropy_sum = 0.0
         self.sample_count = 0
         self.zero_norm_count = 0
         self.max_norm_relative_error = 0.0
@@ -58,7 +59,7 @@ class RoutingDiagnostics:
         detached = logits.detach().to(dtype=torch.float64, device="cpu")
         probabilities = torch.softmax(detached, dim=-1)
         per_sample_entropy = -(probabilities * probabilities.clamp_min(1e-300).log()).sum(dim=-1)
-        self.sample_entropy_sum += float(per_sample_entropy.sum().item())
+        self.full_softmax_entropy_sum += float(per_sample_entropy.sum().item())
         self.sample_count += detached.shape[0]
 
         top1 = detached.argmax(dim=-1)
@@ -67,6 +68,10 @@ class RoutingDiagnostics:
         selected = selected_indices.reshape(-1)
         self.selected_counts += torch.bincount(selected, minlength=self.num_experts)
         selected_weights = torch.softmax(selected_values, dim=-1)
+        active_entropy = -(
+            selected_weights * selected_weights.clamp_min(1e-300).log()
+        ).sum(dim=-1)
+        self.active_topk_entropy_sum += float(active_entropy.sum().item())
         self.gate_weight_sums.scatter_add_(
             0,
             selected,
@@ -105,15 +110,25 @@ class RoutingDiagnostics:
     def finalize(self) -> Dict[str, Any]:
         statistics = self.spectrum.finalize()
         normalizer = math.log(self.num_experts) if self.num_experts > 1 else 1.0
-        mean_router_entropy = self.sample_entropy_sum / max(self.sample_count, 1)
+        mean_full_softmax_entropy = self.full_softmax_entropy_sum / max(self.sample_count, 1)
+        active_normalizer = math.log(self.top_k) if self.top_k > 1 else 1.0
+        mean_active_topk_entropy = self.active_topk_entropy_sum / max(self.sample_count, 1)
         result: Dict[str, Any] = {
             "sample_count": self.sample_count,
             "effective_rank": effective_rank(statistics.singular_values),
             "normalized_effective_rank": effective_rank(statistics.singular_values)
             / statistics.dimension,
             "singular_values": [float(value) for value in statistics.singular_values.tolist()],
-            "mean_router_entropy": mean_router_entropy,
-            "mean_normalized_router_entropy": mean_router_entropy / normalizer,
+            "mean_full_softmax_logit_entropy": mean_full_softmax_entropy,
+            "mean_normalized_full_softmax_logit_entropy": mean_full_softmax_entropy / normalizer,
+            "mean_active_topk_weight_entropy": mean_active_topk_entropy,
+            "mean_normalized_active_topk_weight_entropy": (
+                mean_active_topk_entropy / active_normalizer if self.top_k > 1 else 0.0
+            ),
+            # Backward-compatible aliases for result readers created before the
+            # full-softmax and active-routing entropies were separated.
+            "mean_router_entropy": mean_full_softmax_entropy,
+            "mean_normalized_router_entropy": mean_full_softmax_entropy / normalizer,
             "zero_norm_count": self.zero_norm_count,
             "max_norm_relative_error": self.max_norm_relative_error,
         }

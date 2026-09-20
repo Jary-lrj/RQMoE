@@ -6,7 +6,12 @@ import argparse
 from pathlib import Path
 from typing import Any, Dict, Mapping
 
-from .project import Config, DeepFM_MoE, REPOSITORY_ROOT
+from .project import (
+    Config,
+    DeepFM_MoE,
+    REPOSITORY_ROOT,
+    use_local_atomic_data_path,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -103,11 +108,12 @@ def build_config(args: argparse.Namespace) -> Config:
         overrides["gpu_id"] = args.gpu_id
     if args.use_gpu is not None:
         overrides["use_gpu"] = args.use_gpu
-    return Config(
+    config = Config(
         model=DeepFM_MoE,
         config_file_list=[str(args.config.resolve())],
         config_dict=overrides,
     )
+    return use_local_atomic_data_path(config)
 
 
 def config_value(config: Any, key: str) -> Any:
@@ -141,4 +147,15 @@ def validate_labeled_evaluation(config: Config) -> None:
         raise ValueError(
             "This runner computes pointwise AUC from interaction labels and requires "
             "eval_args.mode='labeled'."
+        )
+
+
+def validate_runtime_seed(config: Config, runtime_seed: int) -> None:
+    configured_seed = config_value(config, "seed")
+    if configured_seed is None:
+        raise ValueError("The RecBole config must record the training/split seed.")
+    if int(configured_seed) != runtime_seed:
+        raise ValueError(
+            f"--seed={runtime_seed} differs from config seed={configured_seed}. "
+            "Use the resolved training_config.yaml stored beside the checkpoint."
         )

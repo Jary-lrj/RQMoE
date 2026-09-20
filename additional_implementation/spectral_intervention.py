@@ -93,7 +93,7 @@ class NormPreservingIntervention(nn.Module):
         scale = torch.where(
             original_norm > self.eps,
             original_norm / transformed_norm.clamp_min(self.eps),
-            torch.ones_like(original_norm),
+            torch.zeros_like(original_norm),
         )
         return transformed * scale
 

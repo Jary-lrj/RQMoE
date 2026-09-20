@@ -1,0 +1,53 @@
+# Base config for official RecBole atomic datasets with a numeric rating field.
+# Runtime dataset paths, seed, checkpoint directory, and top_k are resolved by
+# additional_implementation.train_shared_checkpoint.
+
+USER_ID_FIELD: user_id
+ITEM_ID_FIELD: item_id
+RATING_FIELD: rating
+TIME_FIELD: timestamp
+LABEL_FIELD: label
+load_col:
+  inter: "*"
+threshold:
+  rating: 3
+
+gpu_id: "0"
+worker: 1
+use_gpu: true
+state: INFO
+reproducibility: true
+show_progress: true
+save_dataset: false
+save_dataloaders: false
+log_wandb: false
+shuffle: true
+
+epochs: 50
+train_batch_size: 4096
+learner: adam
+learning_rate: 0.001
+train_neg_sample_args: null
+eval_step: 1
+stopping_step: 2
+clip_grad_norm: null
+weight_decay: 0.0
+enable_amp: false
+enable_scaler: false
+
+eval_args:
+  split: {RS: [0.8, 0.1, 0.1]}
+  order: RO
+  group_by: null
+  mode: labeled
+metrics: [AUC, LogLoss]
+valid_metric: LogLoss
+repeatable: true
+eval_batch_size: 4096
+
+embedding_size: 10
+mlp_hidden_size: [32, 16]
+dropout_prob: 0.2
+aux_lambda: 0.01
+num_experts: 8
+top_k: 4

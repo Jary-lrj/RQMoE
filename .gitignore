@@ -1,1 +1,24 @@
+# Downloaded datasets and archives
 exps/running/dataset/
+
+# Experiment artifacts
+additional_implementation/checkpoints/
+additional_implementation/logs/
+additional_implementation/results/
+log/
+log_tensorboard/
+
+# Model weights
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+
+# Runtime output
+*.log
+__pycache__/
+*.py[cod]
+
+# Local environments and editor files
+.venv/
+.DS_Store

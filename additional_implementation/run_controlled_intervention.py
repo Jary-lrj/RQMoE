@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import warnings
 from typing import Dict
 
 import torch
@@ -19,6 +18,7 @@ from .configuration import (
     parse_args,
     validate_args,
     validate_labeled_evaluation,
+    validate_runtime_seed,
 )
 from .experiment import (
     build_conditions,
@@ -37,10 +37,9 @@ def load_protocol_checkpoints(
     if protocol == "shared_checkpoint":
         bundle = load_checkpoint_bundle(args.shared_checkpoint)
         if bundle.training_top_k is None:
-            warnings.warn(
-                "The shared checkpoint does not record its training Top-k. A k=4-trained checkpoint "
-                "is recommended for the controlled inference Top-k comparison.",
-                stacklevel=2,
+            raise ValueError(
+                "The shared checkpoint does not record its training Top-k; use a checkpoint "
+                "created by additional_implementation.train_shared_checkpoint."
             )
         elif bundle.training_top_k != 4:
             raise ValueError(
@@ -54,7 +53,9 @@ def load_protocol_checkpoints(
         4: load_checkpoint_bundle(args.checkpoint_k4),
     }
     for expected_top_k, bundle in bundles.items():
-        if bundle.training_top_k is not None and bundle.training_top_k != expected_top_k:
+        if bundle.training_top_k is None:
+            raise ValueError(f"{bundle.path} does not record its training Top-k.")
+        if bundle.training_top_k != expected_top_k:
             raise ValueError(
                 f"{bundle.path} records training Top-k={bundle.training_top_k}; "
                 f"expected Top-k={expected_top_k}."
@@ -100,6 +101,7 @@ def run(args: argparse.Namespace) -> None:
     protocol = validate_args(args)
     config = build_config(args)
     validate_labeled_evaluation(config)
+    validate_runtime_seed(config, args.seed)
     checkpoint_bundles = load_protocol_checkpoints(args, protocol)
     for bundle in checkpoint_bundles.values():
         validate_checkpoint_config(config, bundle)
