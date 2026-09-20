@@ -227,3 +227,66 @@ coordinate spectrum and may not adapt immediately to flattened inputs. A
 training-time flattening study or a frozen-encoder/frozen-expert experiment
 that retrains only the router can be added later if the post-hoc result is
 negative.
+
+## Auxiliary-loss alpha sweep and Loss-Free control
+
+The load-balancing runner extends the paper's Beauty/Figure 2 experiment over
+the full requested grid and a controlled Loss-Free condition. It uses the
+manuscript setting of eight experts, Top-1 routing, the same DeepFM-MoE
+backbone, and five deterministic seeds by default:
+
+```bash
+python -B -m additional_implementation.run_balancing_sweep \
+  --dataset beauty \
+  --data-path exps/running/dataset \
+  --output-dir additional_implementation/results/load_balancing/beauty_n8_k1 \
+  --gpu-id 2 \
+  --num-experts 8 \
+  --top-k 1 \
+  --alphas 0 1e-3 1e-2 1e-1 1 10 \
+  --seeds 42 43 44 45 46
+```
+
+Do not set `CUDA_VISIBLE_DEVICES` together with a different `--gpu-id`. In the
+standard server environment, passing `--gpu-id 2` alone selects physical GPU
+2 through RecBole.
+
+The auxiliary-loss conditions implement
+`alpha * N * sum_i(f_i * P_i)`, where `P_i` is the dense softmax probability
+before Top-k and `f_i` is the detached selected-load fraction. This explicit
+dense probability is required for a meaningful Top-1 auxiliary gradient.
+
+The adapted Loss-Free sign-bias control follows Algorithm 1 of Wang et al.
+(2024): expert
+selection uses the original softmax routing score plus a learned bias, mixture
+weights use the original unbiased probabilities with the backbone's unchanged
+Top-k renormalization, and the bias is updated from the
+preceding batch's load-error sign with `u=1e-3`. Its auxiliary coefficient is
+fixed to zero. Wang et al.'s softmax appendix uses a proportional-error update;
+that variant is excluded because raw count updates scale with batch size and
+were unstable in this Top-1 recommendation setting. This controlled condition
+therefore tests the Loss-Free sign-bias mechanism within the legacy RQMoE
+softmax/Top-1 path and is not an exact reproduction of the paper's softmax
+appendix experiment. The legacy Top-1 renormalization also gives the task loss
+essentially zero router-weight gradient, a property shared by every condition
+in this sweep.
+
+Each condition saves an independent best-validation checkpoint and a JSON
+audit record. The aggregate outputs are:
+
+- `runs.csv`: exact per-seed test AUC, LogLoss, expert counts, raw and
+  normalized load entropy, CV, CV-squared, max-load ratio, and MaxVio;
+- `summary.csv`: mean and sample standard deviation across seeds;
+- `paired_deltas.csv` and `paired_summary.csv`: per-seed and aggregate changes
+  relative to the matching-seed `alpha=0` run;
+- `RESULTS.md`: manuscript-ready summary and per-run audit tables;
+- `balancing_sweep.html`: compact, self-contained dual-axis figure that overlays
+  test AUC and normalized expert-load entropy for every alpha condition and the
+  `LF-sign` control. Its 690 x 226 canvas matches Figure 2's approximately
+  3.05:1 wide, shallow proportion. CV and max-load ratio remain available in
+  the Markdown and CSV tables.
+
+Load metrics are computed once from assignment counts aggregated across the
+complete test split. For counts `c_i`, the implementation reports
+`H=-sum_i p_i log(p_i)`, `H/log(N)`, `CV=population_std(c)/mean(c)`, and
+`max(c)/mean(c)`, with `p_i=c_i/sum_j(c_j)`.
